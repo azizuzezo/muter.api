@@ -120,6 +120,7 @@ Supports Google native API endpoints:
 
 | Model | Description | Output |
 |-------|-------------|--------|
+| `gemini-4-argon` | Gemini 4 Argon (Flash category) | ~12k chars |
 | `gemini-3.7-flash` | All-around model (latest, default) | ~12k chars |
 | `gemini-3.6-flash` | Alias for gemini-3.7-flash | ~12k chars |
 | `gemini-3.5-flash` | Alias for gemini-3.7-flash | ~12k chars |
