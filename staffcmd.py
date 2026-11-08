@@ -62,6 +62,7 @@ Aksi yang tersedia (gunakan nama persis dari DAFTAR SERVER untuk category/channe
 - {"action":"remove_role","user_id":"123","role":"nama"}
 
 Aturan:
+- Untuk aksi dengan field "channel", tambahkan "channel_type":"voice" atau "text" kalau ada nama kembar (voice channel juga punya chat teks sendiri; purge/send_message bisa ke voice dengan channel_type voice).
 - reply hanya untuk menjelaskan/bertanya. JANGAN pernah menulis di reply bahwa kamu "sudah"/"akan" melakukan sesuatu; hasil nyata dilaporkan sistem. Kalau permintaan tidak cocok dengan aksi mana pun, actions harus kosong dan reply menjelaskan kenapa.
 - Maksimal 15 aksi (boleh banyak untuk merapikan server). Kalau permintaan tidak jelas atau tidak bisa dilakukan, kosongkan actions dan jelaskan/tanya di reply.
 - Untuk create_channel text: name berupa slug huruf kecil dengan tanda hubung (contoh "request-fitur"); emoji cocok dengan topiknya. Jangan menaruh dekorasi ╭┃╰ sendiri, sistem yang menambahkan.
@@ -90,6 +91,24 @@ def _find(items, query: str):
     if not cand:
         return None, f"'{query}' tidak ditemukan"
     return None, f"'{query}' ambigu: " + ", ".join(i.name for i in cand[:5])
+
+
+VOICE_TYPES = (discord.VoiceChannel, discord.StageChannel)
+
+
+def _find_ch(guild: discord.Guild, query: str, kind: str | None = None):
+    """Cari channel; kind='voice'|'text' memilah nama kembar (mis. voice & text 'Ngobrol Santai')."""
+    q = str(query or "")
+    kind = (kind or "").lower()
+    if not kind and re.search(r"\b(voice|vc)\b", q, re.I):
+        kind = "voice"
+        q = re.sub(r"\b(voice|vc)\b", "", q, flags=re.I)
+    pool = list(guild.channels)
+    if kind == "voice":
+        pool = [c for c in pool if isinstance(c, VOICE_TYPES)]
+    elif kind == "text":
+        pool = [c for c in pool if isinstance(c, discord.TextChannel)]
+    return _find(pool, q)
 
 
 def _color(value: str):
@@ -218,7 +237,7 @@ async def run_action(guild: discord.Guild, member: discord.Member, a: dict, tagg
         return f"✅ Channel {ch.mention} dibuat" + (f" di **{category.name}**" if category else "")
 
     if act in ("rename_channel", "set_topic", "move_channel", "delete_channel", "send_message"):
-        ch, err = _find(guild.channels, str(a.get("channel", "")))
+        ch, err = _find_ch(guild, a.get("channel", ""), a.get("channel_type"))
         if err:
             return f"❌ {act}: channel {err}"
         if act in ("rename_channel", "delete_channel", "move_channel") and ch.id in PROTECTED_CHANNELS:
@@ -241,8 +260,8 @@ async def run_action(guild: discord.Guild, member: discord.Member, a: dict, tagg
             await ch.edit(category=cat, reason=reason)
             return f"✅ {ch.mention} dipindah ke **{cat.name}**"
         if act == "send_message":
-            if not isinstance(ch, discord.TextChannel):
-                return "❌ send_message: hanya untuk text channel"
+            if not isinstance(ch, (discord.TextChannel,) + VOICE_TYPES):
+                return "❌ send_message: channel ini tidak punya chat"
             await ch.send(str(a.get("text", ""))[:1900], allowed_mentions=discord.AllowedMentions.none())
             return f"✅ Pesan terkirim ke {ch.mention}"
         if act == "delete_channel":
@@ -276,7 +295,7 @@ async def run_action(guild: discord.Guild, member: discord.Member, a: dict, tagg
         return f"✅ Role **{name}** dihapus"
 
     if act == "set_access":
-        ch, err = _find(guild.channels, str(a.get("channel", "")))
+        ch, err = _find_ch(guild, a.get("channel", ""), a.get("channel_type"))
         if err:
             return f"❌ set_access: channel {err}"
         if (ch.id in PROTECTED_CHANNELS or ch.id == config.CHANNEL_STAFF_CMD
@@ -310,7 +329,7 @@ async def run_action(guild: discord.Guild, member: discord.Member, a: dict, tagg
         return "❌ set_access: access harus allow / read_only / deny / reset"
 
     if act in ("set_position", "set_slowmode", "sync_permissions", "purge"):
-        ch, err = _find(guild.channels, str(a.get("channel", "")))
+        ch, err = _find_ch(guild, a.get("channel", ""), a.get("channel_type"))
         if err:
             return f"❌ {act}: channel {err}"
         if act == "set_position":
@@ -332,8 +351,8 @@ async def run_action(guild: discord.Guild, member: discord.Member, a: dict, tagg
             await ch.edit(sync_permissions=True, reason=reason)
             return f"✅ Izin {ch.mention} disamakan dengan kategori **{ch.category.name}**"
         if act == "purge":
-            if not isinstance(ch, discord.TextChannel):
-                return "❌ purge: hanya untuk text channel"
+            if not isinstance(ch, (discord.TextChannel,) + VOICE_TYPES):
+                return "❌ purge: channel ini tidak punya chat"
             n = min(100, max(1, int(a.get("count", 10) or 10)))
             deleted = await ch.purge(limit=n, check=purge_check, reason=reason)
             return f"✅ {len(deleted)} pesan dihapus di {ch.mention} (pesan pin & panel bot dilewati)"
