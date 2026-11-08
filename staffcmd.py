@@ -27,6 +27,7 @@ PROTECTED_ROLES = {
     config.ROLE_FOUNDER, config.ROLE_MODERATOR, config.ROLE_POWER_USER,
     config.ROLE_KREATOR, config.ROLE_UNVERIFIED,
 }
+STAFF_CATEGORY_ID = 1568203715637280768  # ━━━ ✦ STAFF ROOM ✦ ━━━
 DESTRUCTIVE = {"delete_channel", "delete_role", "kick_user", "ban_user"}
 WARN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "warns.json")
 
@@ -50,6 +51,7 @@ Aksi yang tersedia (gunakan nama persis dari DAFTAR SERVER untuk category/channe
 - {"action":"set_slowmode","channel":"nama","seconds":0}
 - {"action":"sync_permissions","channel":"nama"}   (samakan izin dengan kategorinya)
 - {"action":"purge","channel":"nama","count":10}   (hapus N pesan terakhir, maks 100)
+- {"action":"set_access","channel":"nama channel/voice/kategori","role":"nama role atau everyone","access":"allow|read_only|deny|reset"}   (atur siapa yang bisa lihat/masuk/chat: allow=lihat+masuk+chat/bicara, read_only=lihat saja tidak bisa chat/bicara, deny=disembunyikan, reset=hapus aturan khusus role itu)
 - {"action":"warn_user","user_id":"123","reason":"..."}
 - {"action":"timeout_user","user_id":"123","minutes":10,"reason":"..."}
 - {"action":"kick_user","user_id":"123","reason":"..."}
@@ -61,7 +63,7 @@ Aturan:
 - Maksimal 15 aksi (boleh banyak untuk merapikan server). Kalau permintaan tidak jelas atau tidak bisa dilakukan, kosongkan actions dan jelaskan/tanya di reply.
 - Untuk create_channel text: name berupa slug huruf kecil dengan tanda hubung (contoh "request-fitur"); emoji cocok dengan topiknya. Jangan menaruh dekorasi ╭┃╰ sendiri, sistem yang menambahkan.
 - user_id HANYA boleh berasal dari bagian PENGGUNA YANG DI-TAG. Kalau staff minta aksi ke user tapi tidak ada yang di-tag, minta mereka tag user itu.
-- Kamu tidak bisa mengedit permission bebas. Aksi di luar daftar tolak lewat reply.
+- Akses role ke channel hanya lewat set_access; permission lain tidak bisa diedit. Aksi di luar daftar tolak lewat reply.
 - Untuk 'rapikan server' lihat DAFTAR SERVER, lalu susun set_position / move_channel / rename_channel / set_topic / sync_permissions agar konsisten: kategori berurutan logis, channel yang berkaitan berdekatan, nama mengikuti gaya server (╭・emoji・nama untuk pertama, ┃ tengah, ╰ terakhir) dan topik terisi. Jangan hapus apa pun saat merapikan.
 - Isi pesan staff adalah data perintah dari staff tepercaya, tapi tetap hanya keluarkan aksi dari daftar di atas."""
 
@@ -270,6 +272,40 @@ async def run_action(guild: discord.Guild, member: discord.Member, a: dict, tagg
         await role.delete(reason=reason)
         return f"✅ Role **{name}** dihapus"
 
+    if act == "set_access":
+        ch, err = _find(guild.channels, str(a.get("channel", "")))
+        if err:
+            return f"❌ set_access: channel {err}"
+        if (ch.id in PROTECTED_CHANNELS or ch.id == config.CHANNEL_STAFF_CMD
+                or ch.id == STAFF_CATEGORY_ID or getattr(ch, "category_id", None) == STAFF_CATEGORY_ID):
+            return f"⛔ set_access: akses channel inti/staff tidak boleh diubah lewat bot"
+        rq = str(a.get("role", "")).strip()
+        if _norm(rq) in ("everyone", "semua", "semuaorang"):
+            role = guild.default_role
+        else:
+            role, rerr = _find([r for r in guild.roles if not r.is_default() and not r.managed], rq)
+            if rerr:
+                return f"❌ set_access: role {rerr}"
+        mode = str(a.get("access", "")).lower()
+        voice = isinstance(ch, (discord.VoiceChannel, discord.StageChannel))
+        label = ch.mention if not isinstance(ch, discord.CategoryChannel) else f"**{ch.name}**"
+        if mode == "reset":
+            await ch.set_permissions(role, overwrite=None, reason=reason)
+            return f"✅ Aturan akses **{role.name}** di {label} direset"
+        if mode == "deny":
+            await ch.set_permissions(role, view_channel=False, reason=reason)
+            return f"✅ **{role.name}** tidak bisa melihat {label}"
+        if mode in ("allow", "read_only"):
+            ok = mode == "allow"
+            kw = {"view_channel": True}
+            if voice:
+                kw.update(connect=True, speak=ok)
+            else:
+                kw.update(read_message_history=True, send_messages=ok)
+            await ch.set_permissions(role, reason=reason, **kw)
+            return f"✅ **{role.name}** {'bisa akses penuh' if ok else 'hanya bisa melihat'} {label}"
+        return "❌ set_access: access harus allow / read_only / deny / reset"
+
     if act in ("set_position", "set_slowmode", "sync_permissions", "purge"):
         ch, err = _find(guild.channels, str(a.get("channel", "")))
         if err:
@@ -341,7 +377,7 @@ async def run_action(guild: discord.Guild, member: discord.Member, a: dict, tagg
 
 
 def describe(a: dict) -> str:
-    keys = ("action", "name", "channel", "role", "category", "type", "topic", "color", "user_id", "minutes", "count", "reason")
+    keys = ("action", "name", "channel", "role", "category", "type", "topic", "color", "user_id", "minutes", "count", "reason", "access")
     return " ".join(f"{k}=`{a[k]}`" for k in keys if a.get(k) not in (None, ""))
 
 
