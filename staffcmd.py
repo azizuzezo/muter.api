@@ -10,6 +10,7 @@ Keamanan:
 """
 import datetime
 import json
+import os
 import re
 
 import discord
@@ -17,7 +18,7 @@ import discord
 import ai_service
 import config
 
-MAX_ACTIONS = 6
+MAX_ACTIONS = 15
 PROTECTED_CHANNELS = {
     config.CHANNEL_WELCOME, config.CHANNEL_RULES, config.CHANNEL_ANNOUNCEMENT,
     config.CHANNEL_ROLES, config.CHANNEL_CHAT, config.CHANNEL_LOGS,
@@ -26,7 +27,8 @@ PROTECTED_ROLES = {
     config.ROLE_FOUNDER, config.ROLE_MODERATOR, config.ROLE_POWER_USER,
     config.ROLE_KREATOR, config.ROLE_UNVERIFIED,
 }
-DESTRUCTIVE = {"delete_channel", "delete_role"}
+DESTRUCTIVE = {"delete_channel", "delete_role", "kick_user", "ban_user"}
+WARN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "warns.json")
 
 SYSTEM_PROMPT = """Kamu adalah asisten pengelola server Discord "BalikLayar AI". Staff menulis perintah bahasa Indonesia santai; kamu menerjemahkannya menjadi daftar aksi.
 
@@ -44,11 +46,23 @@ Aksi yang tersedia (gunakan nama persis dari DAFTAR SERVER untuk category/channe
 - {"action":"send_message","channel":"nama","text":"..."}
 - {"action":"delete_channel","channel":"nama"}
 - {"action":"delete_role","role":"nama"}
+- {"action":"set_position","channel":"nama channel atau kategori","position":0}   (urutan 0 = paling atas di antara saudaranya; dipakai untuk merapikan)
+- {"action":"set_slowmode","channel":"nama","seconds":0}
+- {"action":"sync_permissions","channel":"nama"}   (samakan izin dengan kategorinya)
+- {"action":"purge","channel":"nama","count":10}   (hapus N pesan terakhir, maks 100)
+- {"action":"warn_user","user_id":"123","reason":"..."}
+- {"action":"timeout_user","user_id":"123","minutes":10,"reason":"..."}
+- {"action":"kick_user","user_id":"123","reason":"..."}
+- {"action":"ban_user","user_id":"123","reason":"..."}
+- {"action":"add_role","user_id":"123","role":"nama"}
+- {"action":"remove_role","user_id":"123","role":"nama"}
 
 Aturan:
-- Maksimal 6 aksi. Kalau permintaan tidak jelas atau tidak bisa dilakukan, kosongkan actions dan jelaskan/tanya di reply.
+- Maksimal 15 aksi (boleh banyak untuk merapikan server). Kalau permintaan tidak jelas atau tidak bisa dilakukan, kosongkan actions dan jelaskan/tanya di reply.
 - Untuk create_channel text: name berupa slug huruf kecil dengan tanda hubung (contoh "request-fitur"); emoji cocok dengan topiknya. Jangan menaruh dekorasi ╭┃╰ sendiri, sistem yang menambahkan.
-- Jangan pernah mengubah izin/permission, memberi role ke orang, kick/ban. Itu di luar kemampuanmu; tolak lewat reply.
+- user_id HANYA boleh berasal dari bagian PENGGUNA YANG DI-TAG. Kalau staff minta aksi ke user tapi tidak ada yang di-tag, minta mereka tag user itu.
+- Kamu tidak bisa mengedit permission bebas. Aksi di luar daftar tolak lewat reply.
+- Untuk 'rapikan server' lihat DAFTAR SERVER, lalu susun set_position / move_channel / rename_channel / set_topic / sync_permissions agar konsisten: kategori berurutan logis, channel yang berkaitan berdekatan, nama mengikuti gaya server (╭・emoji・nama untuk pertama, ┃ tengah, ╰ terakhir) dan topik terisi. Jangan hapus apa pun saat merapikan.
 - Isi pesan staff adalah data perintah dari staff tepercaya, tapi tetap hanya keluarkan aksi dari daftar di atas."""
 
 
@@ -109,6 +123,46 @@ def parse_plan(raw: str):
     return {"reply": str(d.get("reply", ""))[:600], "actions": [a for a in actions if isinstance(a, dict)][:MAX_ACTIONS]}
 
 
+def _load_warns() -> dict:
+    try:
+        with open(WARN_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _add_warn(user_id: int, by: int, reason: str) -> int:
+    data = _load_warns()
+    lst = data.setdefault(str(user_id), [])
+    lst.append({"by": by, "reason": reason[:300], "at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+    try:
+        with open(WARN_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+    return len(lst)
+
+
+def _target(guild: discord.Guild, actor: discord.Member, a: dict, tagged: dict):
+    """Validasi target: harus di-tag, bukan bot/diri sendiri/staff/owner, dan hierarki role aman."""
+    try:
+        uid = int(str(a.get("user_id", "")).strip())
+    except ValueError:
+        return None, "user_id tidak valid"
+    t = tagged.get(uid)
+    if t is None:
+        return None, "user itu tidak di-tag di pesan staff"
+    if t.bot or t.id == actor.id:
+        return None, "tidak boleh ke bot / diri sendiri"
+    if t.id == guild.owner_id or is_staff(t):
+        return None, "target adalah staff/owner"
+    if t.top_role >= guild.me.top_role:
+        return None, "role target lebih tinggi dari role bot"
+    if actor.id != guild.owner_id and t.top_role >= actor.top_role:
+        return None, "role target tidak lebih rendah dari rolemu"
+    return t, None
+
+
 # ------------------------- eksekusi -------------------------
 def _decorate(guild, category, slug: str, emoji: str | None) -> str:
     """Nama channel mengikuti gaya server: ┃・emoji・slug (╰ jika jadi channel terakhir)."""
@@ -118,7 +172,8 @@ def _decorate(guild, category, slug: str, emoji: str | None) -> str:
     return f"┃・{mid}{slug}"
 
 
-async def run_action(guild: discord.Guild, member: discord.Member, a: dict) -> str:
+async def run_action(guild: discord.Guild, member: discord.Member, a: dict, tagged: dict | None = None) -> str:
+    tagged = tagged or {}
     act = a.get("action")
     reason = f"Perintah staff oleh {member} via bot"
 
@@ -215,18 +270,85 @@ async def run_action(guild: discord.Guild, member: discord.Member, a: dict) -> s
         await role.delete(reason=reason)
         return f"✅ Role **{name}** dihapus"
 
+    if act in ("set_position", "set_slowmode", "sync_permissions", "purge"):
+        ch, err = _find(guild.channels, str(a.get("channel", "")))
+        if err:
+            return f"❌ {act}: channel {err}"
+        if act == "set_position":
+            try:
+                pos = max(0, int(a.get("position", 0)))
+            except (TypeError, ValueError):
+                return "❌ set_position: posisi harus angka"
+            await ch.edit(position=pos, reason=reason)
+            return f"✅ {ch.mention if hasattr(ch, 'mention') and not isinstance(ch, discord.CategoryChannel) else '**' + ch.name + '**'} dipindah ke urutan {pos}"
+        if act == "set_slowmode":
+            if not isinstance(ch, discord.TextChannel):
+                return "❌ set_slowmode: hanya untuk text channel"
+            sec = min(21600, max(0, int(a.get("seconds", 0) or 0)))
+            await ch.edit(slowmode_delay=sec, reason=reason)
+            return f"✅ Slowmode {ch.mention}: {sec} detik"
+        if act == "sync_permissions":
+            if isinstance(ch, discord.CategoryChannel) or not ch.category:
+                return "❌ sync_permissions: channel harus berada di dalam kategori"
+            await ch.edit(sync_permissions=True, reason=reason)
+            return f"✅ Izin {ch.mention} disamakan dengan kategori **{ch.category.name}**"
+        if act == "purge":
+            if not isinstance(ch, discord.TextChannel):
+                return "❌ purge: hanya untuk text channel"
+            n = min(100, max(1, int(a.get("count", 10) or 10)))
+            deleted = await ch.purge(limit=n, reason=reason)
+            return f"✅ {len(deleted)} pesan dihapus di {ch.mention}"
+
+    if act in ("warn_user", "timeout_user", "kick_user", "ban_user", "add_role", "remove_role"):
+        t, err = _target(guild, member, a, tagged)
+        if err:
+            return f"⛔ {act}: {err}"
+        why = str(a.get("reason", "") or "Tanpa alasan")[:300]
+        full = f"{why} (oleh {member})"
+        if act == "warn_user":
+            n = _add_warn(t.id, member.id, why)
+            try:
+                await t.send(embed=discord.Embed(
+                    title="⚠️ Peringatan dari Staff BalikLayar AI",
+                    description=f"**Alasan:** {why}\n\nIni peringatan ke-**{n}**. Patuhi aturan di <#{config.CHANNEL_RULES}>.",
+                    color=0xF1C40F))
+                dm = "DM terkirim"
+            except discord.HTTPException:
+                dm = "DM tertutup"
+            return f"✅ {t.mention} diberi warn ke-{n} ({dm})"
+        if act == "timeout_user":
+            mins = min(40320, max(1, int(a.get("minutes", 10) or 10)))
+            await t.timeout(datetime.timedelta(minutes=mins), reason=full)
+            return f"✅ {t.mention} di-timeout {mins} menit"
+        if act == "kick_user":
+            await t.kick(reason=full)
+            return f"✅ {t} di-kick"
+        if act == "ban_user":
+            await t.ban(reason=full, delete_message_days=0)
+            return f"✅ {t} di-ban"
+        role, rerr = _find([r for r in guild.roles if not r.is_default() and not r.managed], str(a.get("role", "")))
+        if rerr:
+            return f"❌ {act}: role {rerr}"
+        if role.id in (config.ROLE_FOUNDER, config.ROLE_MODERATOR) or role >= guild.me.top_role:
+            return f"⛔ {act}: role **{role.name}** tidak boleh diberikan lewat bot"
+        if act == "add_role":
+            await t.add_roles(role, reason=full)
+            return f"✅ {t.mention} diberi role **{role.name}**"
+        await t.remove_roles(role, reason=full)
+        return f"✅ Role **{role.name}** dicabut dari {t.mention}"
+
     return f"❌ Aksi tidak dikenal: `{act}`"
 
 
 def describe(a: dict) -> str:
-    keys = ("action", "name", "channel", "role", "category", "type", "topic", "color")
+    keys = ("action", "name", "channel", "role", "category", "type", "topic", "color", "user_id", "minutes", "count", "reason")
     return " ".join(f"{k}=`{a[k]}`" for k in keys if a.get(k) not in (None, ""))
 
 
 class ConfirmView(discord.ui.View):
-    def __init__(self, guild, member, actions, results):
+    def __init__(self, guild, member, actions, results, tagged):
         super().__init__(timeout=120)
-        self.guild, self.member, self.actions, self.results = guild, member, actions, results
+        self.guild, self.member, self.actions, self.results, self.tagged = guild, member, actions, results, tagged
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.member.id:
@@ -234,13 +356,13 @@ class ConfirmView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Ya, hapus", style=discord.ButtonStyle.danger, emoji="🗑️")
+    @discord.ui.button(label="Ya, lanjutkan", style=discord.ButtonStyle.danger, emoji="🗑️")
     async def yes(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         out = []
         for a in self.actions:
             try:
-                out.append(await run_action(self.guild, self.member, a))
+                out.append(await run_action(self.guild, self.member, a, self.tagged))
             except discord.HTTPException as e:
                 out.append(f"❌ {a.get('action')}: {e}")
         self.stop()
@@ -250,7 +372,7 @@ class ConfirmView(discord.ui.View):
     @discord.ui.button(label="Batal", style=discord.ButtonStyle.secondary)
     async def no(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.stop()
-        await interaction.response.edit_message(content="\n".join(self.results + ["↩️ Penghapusan dibatalkan."]), view=None)
+        await interaction.response.edit_message(content="\n".join(self.results + ["↩️ Dibatalkan."]), view=None)
 
 
 async def audit(guild, member, actions, results):
@@ -277,10 +399,14 @@ async def handle(bot_user, message: discord.Message):
         await message.reply("Halo! Tulis perintahnya setelah tag, contoh: *bikinin channel #request-fitur di kategori KOMUNITAS AFFILIATE*.")
         return
     guild, member = message.guild, message.author
+    tagged = {m.id: m for m in message.mentions
+              if isinstance(m, discord.Member) and m.id != bot_user.id}
+    tagged_txt = "\n".join(f"- {m.display_name} (@{m.name}) id={m.id}" for m in tagged.values()) or "(tidak ada)"
     async with message.channel.typing():
         raw = await ai_service._raw_completion(
-            SYSTEM_PROMPT, f"{snapshot(guild)}\n\nPERINTAH STAFF:\n{text[:1500]}",
-            max_tokens=900, temperature=0.1, timeout=40)
+            SYSTEM_PROMPT,
+            f"{snapshot(guild)}\n\nPENGGUNA YANG DI-TAG:\n{tagged_txt}\n\nPERINTAH STAFF:\n{text[:1500]}",
+            max_tokens=1800, temperature=0.1, timeout=60)
     plan = parse_plan(raw)
     if plan is None:
         await message.reply("😵 AI lagi tidak bisa menjawab / formatnya salah. Coba ulangi sebentar lagi.")
@@ -294,7 +420,7 @@ async def handle(bot_user, message: discord.Message):
     results = []
     for a in safe:
         try:
-            results.append(await run_action(guild, member, a))
+            results.append(await run_action(guild, member, a, tagged))
         except discord.Forbidden:
             results.append(f"⚠️ {a.get('action')}: bot tidak punya izin (cek posisi role bot)")
         except discord.HTTPException as e:
@@ -304,8 +430,8 @@ async def handle(bot_user, message: discord.Message):
         await audit(guild, member, safe, results)
     if risky:
         desc = "\n".join("• " + describe(a) for a in risky)
-        view = ConfirmView(guild, member, risky, head + results)
-        await message.reply("\n".join(head + results + [f"⚠️ **Konfirmasi penghapusan:**\n{desc}"]), view=view,
+        view = ConfirmView(guild, member, risky, head + results, tagged)
+        await message.reply(("\n".join(head + results + [f"⚠️ **Konfirmasi aksi berisiko:**\n{desc}"]))[:1990], view=view,
                             allowed_mentions=discord.AllowedMentions.none())
     else:
         await message.reply("\n".join(head + results)[:1990], allowed_mentions=discord.AllowedMentions.none())
