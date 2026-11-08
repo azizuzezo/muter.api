@@ -5,6 +5,7 @@
 - Semua role warna diletakkan tepat di bawah Moderator, jadi mengalahkan warna
   Kreator/Power User tapi tidak warna staff.
 """
+import asyncio
 import re
 
 import discord
@@ -31,6 +32,17 @@ ALLOWED_ROLES = (
     config.ROLE_KREATOR, config.ROLE_POWER_USER, config.ROLE_MODERATOR, config.ROLE_FOUNDER,
 )
 _HEX_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
+
+
+def cleanup(interaction: discord.Interaction, delay: float = 6):
+    """Hapus balasan ephemeral otomatis supaya tidak menumpuk di layar member."""
+    async def _later():
+        await asyncio.sleep(delay)
+        try:
+            await interaction.delete_original_response()
+        except discord.HTTPException:
+            pass
+    asyncio.create_task(_later())
 
 
 def _is_eligible(member: discord.Member) -> bool:
@@ -78,6 +90,7 @@ async def _apply_preset(interaction: discord.Interaction, name: str):
     if role not in member.roles:
         await member.add_roles(role, reason="Pilih warna")
     await interaction.followup.send(f"✨ Warna namamu sekarang **{name}** (`#{hexv}`).", ephemeral=True)
+    cleanup(interaction)
 
 
 class CustomColorModal(discord.ui.Modal, title="Warna Custom (HEX)"):
@@ -89,6 +102,7 @@ class CustomColorModal(discord.ui.Modal, title="Warna Custom (HEX)"):
         if not m:
             await interaction.response.send_message(
                 "❌ Format salah. Pakai 6 digit HEX, contoh `FF5733`.", ephemeral=True)
+            cleanup(interaction)
             return
         await interaction.response.defer(ephemeral=True)
         member, guild = interaction.user, interaction.guild
@@ -106,13 +120,16 @@ class CustomColorModal(discord.ui.Modal, title="Warna Custom (HEX)"):
         if role not in member.roles:
             await member.add_roles(role, reason="Warna custom")
         await interaction.followup.send(f"🎨 Warna custom `#{m.group(1).upper()}` dipasang!", ephemeral=True)
+        cleanup(interaction)
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
         msg = "⚠️ Gagal mengatur warna. Pastikan role bot berada di atas role warna."
         if interaction.response.is_done():
             await interaction.followup.send(msg, ephemeral=True)
+            cleanup(interaction)
         else:
             await interaction.response.send_message(msg, ephemeral=True)
+            cleanup(interaction)
 
 
 class ColorSelect(discord.ui.Select):
@@ -128,6 +145,7 @@ class ColorSelect(discord.ui.Select):
         if not _is_eligible(interaction.user):
             await interaction.response.send_message(
                 "🔒 Verifikasi dulu untuk jadi **Kreator**, baru bisa ganti warna.", ephemeral=True)
+            cleanup(interaction)
             return
         await interaction.response.defer(ephemeral=True)
         try:
@@ -135,6 +153,7 @@ class ColorSelect(discord.ui.Select):
         except discord.HTTPException:
             await interaction.followup.send(
                 "⚠️ Gagal mengatur warna. Hubungi Moderator.", ephemeral=True)
+            cleanup(interaction)
 
 
 class ColorRoleView(discord.ui.View):
@@ -148,6 +167,7 @@ class ColorRoleView(discord.ui.View):
         if not _is_eligible(interaction.user):
             await interaction.response.send_message(
                 "🔒 Verifikasi dulu untuk jadi **Kreator**, baru bisa ganti warna.", ephemeral=True)
+            cleanup(interaction)
             return
         await interaction.response.send_modal(CustomColorModal())
 
@@ -157,6 +177,7 @@ class ColorRoleView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         await _strip(interaction.user)
         await interaction.followup.send("♻️ Warna dikembalikan ke warna role bawaan.", ephemeral=True)
+        cleanup(interaction)
 
 
 def build_embed() -> discord.Embed:

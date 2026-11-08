@@ -26,6 +26,7 @@ import re
 import config
 import ai_service
 import colorroles
+from colorroles import cleanup
 from tiktok_monitor import TikTokMonitor
 
 intents = discord.Intents.default()
@@ -109,6 +110,7 @@ class VerifyQuestionModal(discord.ui.Modal, title="Verifikasi Real Human"):
     async def on_submit(self, interaction: discord.Interaction):
         if self.jawaban.value.strip() != str(self.answer):
             await interaction.response.send_message("❌ Jawaban salah. Klik tombol verifikasi lagi untuk mencoba ulang.", ephemeral=True)
+            cleanup(interaction, 10)
             return
         await complete_verification(interaction)
 
@@ -170,6 +172,7 @@ async def complete_verification(interaction: discord.Interaction):
         color=0x2ECC71
     )
     await interaction.response.send_message(embed=success_embed, ephemeral=True)
+    cleanup(interaction, 30)
 
     # 4. Catat ke #bot-logs
     logs_ch = bot.get_channel(config.CHANNEL_LOGS)
