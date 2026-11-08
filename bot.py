@@ -522,6 +522,7 @@ async def setup_verifikasi(interaction: discord.Interaction):
     view = HumanVerificationView()
     channel = bot.get_channel(config.CHANNEL_ROLES)
     if channel:
+        await channel.send(file=discord.File("assets/banners/verifikasi.png"))
         await channel.send(embed=embed, view=view)
         await interaction.response.send_message(f"✅ Panel verifikasi otomatis dipasang di <#{config.CHANNEL_ROLES}>!", ephemeral=True)
     else:
@@ -531,6 +532,7 @@ async def setup_verifikasi(interaction: discord.Interaction):
 @bot.tree.command(name="setup-warna", description="Pasang panel ganti warna role ke channel ini")
 @app_commands.default_permissions(administrator=True)
 async def setup_warna(interaction: discord.Interaction):
+    await interaction.channel.send(file=discord.File("assets/banners/warna-role.png"))
     await interaction.channel.send(embed=colorroles.build_embed(), view=colorroles.ColorRoleView())
     await interaction.response.send_message("✅ Panel warna dipasang.", ephemeral=True)
 
