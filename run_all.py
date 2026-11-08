@@ -31,6 +31,7 @@ def main():
     bot_proc = subprocess.Popen(bot_cmd, cwd=cwd)
 
     def handle_exit(signum, frame):
+        nonlocal api_proc
         print("\n🛑 [SairiHost] Menerima sinyal stop, mematikan semua proses...")
         try:
             bot_proc.terminate()
@@ -42,13 +43,20 @@ def main():
     signal.signal(signal.SIGINT, handle_exit)
     signal.signal(signal.SIGTERM, handle_exit)
 
-    # Tunggu proses bot
+    # Pantau kedua proses. API mati -> hidupkan lagi (bot tetap jalan). Bot mati -> keluar (host akan restart).
     try:
-        bot_proc.wait()
+        while bot_proc.poll() is None:
+            if api_proc.poll() is not None:
+                print(f"♻️ [SairiHost] DuaCincin API mati (kode {api_proc.returncode}), menyalakan ulang...", flush=True)
+                time.sleep(2)
+                api_proc = subprocess.Popen(api_cmd, cwd=cwd)
+            time.sleep(5)
+        print(f"🛑 [SairiHost] Bot berhenti (kode {bot_proc.returncode}).", flush=True)
     except KeyboardInterrupt:
         handle_exit(None, None)
     finally:
         api_proc.terminate()
+
 
 if __name__ == "__main__":
     main()

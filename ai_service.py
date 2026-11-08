@@ -31,6 +31,16 @@ PENGETAHUAN & INGATAN:
 - Maksimal 1800 karakter agar muat dalam satu pesan Discord.
 """
 
+import time as _time
+
+
+def _log_ai(provider: str, started: float, status=None, err=None):
+    """Catat kegagalan AI ke konsol (sebelumnya semua error ditelan diam-diam)."""
+    ms = int((_time.perf_counter() - started) * 1000)
+    why = f"HTTP {status}" if status else f"{type(err).__name__}: {str(err)[:120]}" if err else "respon kosong"
+    print(f"⚠️ [AI] {provider} gagal setelah {ms} ms — {why}", flush=True)
+
+
 def clean_ai_response(text: str) -> str:
     """Membersihkan sapaan kaku/robotik seperti Halo Kak [nama] jika AI masih mencoba memunculkannya."""
     if not text:
@@ -53,8 +63,8 @@ def get_knowledge_base() -> str:
         try:
             with open(k_path, "r", encoding="utf-8") as f:
                 return f.read().strip()
-        except Exception:
-            pass
+        except Exception as e:
+            _log_ai("fallback", _time.perf_counter(), err=e)
     return ""
 
 def add_training_memory(topik: str, informasi: str, author_name: str) -> bool:
@@ -75,6 +85,32 @@ def add_training_memory(topik: str, informasi: str, author_name: str) -> bool:
         print(f"Error saving training memory: {e}")
         return False
 
+async def _call_openai_like(provider, url, key, payload, timeout):
+    """POST ke endpoint kompatibel OpenAI. Retry 1x untuk error jaringan/5xx cepat. None jika gagal."""
+    for attempt in (1, 2):
+        t0 = _time.perf_counter()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                                        json=payload, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        choices = data.get("choices", [])
+                        if choices:
+                            return choices[0].get("message", {}).get("content", "")
+                        _log_ai(provider, t0)
+                        return None
+                    _log_ai(provider, t0, status=resp.status)
+                    if resp.status < 500:
+                        return None  # 4xx (key salah / limit): retry tidak membantu
+        except Exception as e:
+            _log_ai(provider, t0, err=e)
+            if isinstance(e, TimeoutError) or "Timeout" in type(e).__name__:
+                return None  # sudah menunggu lama; jangan menggandakan waktu tunggu
+        # error cepat -> coba sekali lagi
+    return None
+
+
 async def query_ai(prompt: str, user_name: str = "Kreator", server_context: str = "", chat_history: str = "") -> str:
     # Siapkan gabungan Knowledge Base, Server Context, dan Riwayat Obrolan
     k_data = get_knowledge_base()
@@ -93,10 +129,6 @@ async def query_ai(prompt: str, user_name: str = "Kreator", server_context: str 
     duacincin_url = getattr(config, "DUACINCIN_API_URL", "http://127.0.0.1:2014/v1/chat/completions")
     duacincin_key = getattr(config, "DUACINCIN_API_KEY", "sk-csportal")
 
-    headers = {
-        "Authorization": f"Bearer {duacincin_key}",
-        "Content-Type": "application/json"
-    }
     payload = {
         "model": getattr(config, "AI_MODEL", "gemini-2.5-flash"),
         "messages": [
@@ -107,17 +139,9 @@ async def query_ai(prompt: str, user_name: str = "Kreator", server_context: str 
         "temperature": 0.7
     }
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(duacincin_url, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    choices = data.get("choices", [])
-                    if choices:
-                        raw_reply = choices[0].get("message", {}).get("content", "Maaf, respon kosong.")
-                        return clean_ai_response(raw_reply)
-    except Exception:
-        pass
+    raw_reply = await _call_openai_like("DuaCincin/BaseURL", duacincin_url, duacincin_key, payload, 30)
+    if raw_reply:
+        return clean_ai_response(raw_reply)
 
     # 2. Fallback ke Google AI Studio Gemini API jika GEMINI_API_KEY diset
     gemini_key = getattr(config, "GEMINI_API_KEY", "").strip()
@@ -139,8 +163,8 @@ async def query_ai(prompt: str, user_name: str = "Kreator", server_context: str 
                             if parts:
                                 raw_reply = parts[0].get("text", "Maaf, tidak ada respon.")
                                 return clean_ai_response(raw_reply)
-        except Exception:
-            pass
+        except Exception as e:
+            _log_ai("fallback", _time.perf_counter(), err=e)
 
     # 3. Fallback ke OpenAI API jika OPENAI_API_KEY diset
     openai_key = getattr(config, "OPENAI_API_KEY", "").strip()
@@ -156,8 +180,8 @@ async def query_ai(prompt: str, user_name: str = "Kreator", server_context: str 
                         if choices:
                             raw_reply = choices[0].get("message", {}).get("content", "Maaf, tidak ada respon.")
                             return clean_ai_response(raw_reply)
-        except Exception:
-            pass
+        except Exception as e:
+            _log_ai("fallback", _time.perf_counter(), err=e)
 
     return (
         "Layanan AI lokal sedang memproses antrean. Coba ulangi pertanyaanmu dalam beberapa detik ya!"
@@ -193,17 +217,9 @@ async def _raw_completion(system: str, user: str, max_tokens: int = 200, tempera
     key = getattr(config, "DUACINCIN_API_KEY", "sk-csportal")
     payload = {"model": getattr(config, "AI_MODEL", "gemini-2.5-flash"), "messages": messages,
                "max_tokens": max_tokens, "temperature": temperature}
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers={"Authorization": f"Bearer {key}"}, json=payload,
-                                    timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    choices = data.get("choices", [])
-                    if choices:
-                        return choices[0].get("message", {}).get("content", "")
-    except Exception:
-        pass
+    out = await _call_openai_like("DuaCincin/BaseURL", url, key, payload, timeout)
+    if out:
+        return out
 
     gemini_key = getattr(config, "GEMINI_API_KEY", "").strip()
     if gemini_key:
@@ -219,8 +235,8 @@ async def _raw_completion(system: str, user: str, max_tokens: int = 200, tempera
                         parts = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [])
                         if parts:
                             return parts[0].get("text", "")
-        except Exception:
-            pass
+        except Exception as e:
+            _log_ai("fallback", _time.perf_counter(), err=e)
     return None
 
 
