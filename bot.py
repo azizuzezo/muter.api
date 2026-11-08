@@ -27,6 +27,7 @@ import config
 import ai_service
 import colorroles
 import staffcmd
+import aisettings
 from colorroles import cleanup
 from tiktok_monitor import TikTokMonitor
 
@@ -41,6 +42,8 @@ class BalikLayarBot(commands.Bot):
     async def setup_hook(self):
         self.add_view(HumanVerificationView())
         self.add_view(colorroles.ColorRoleView())
+        self.add_view(aisettings.AISettingsView())
+        aisettings.load()
         guild = discord.Object(id=config.GUILD_ID)
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)

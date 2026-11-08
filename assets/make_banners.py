@@ -20,6 +20,7 @@ BANNERS = [
     ("verifikasi", "VERIFIKASI", "Satu klik untuk jadi Kreator resmi", (46, 204, 113), (26, 188, 156), "shield"),
     ("warna-role", "WARNA ROLE", "Bikin namamu paling menonjol", (233, 30, 140), (155, 89, 182), "palette"),
     ("pengumuman", "PENGUMUMAN", "Update & info penting terbaru", (255, 193, 7), (255, 112, 67), "mega"),
+    ("ai-settings", "AI SETTINGS", "Ganti API key, base URL & model", (124, 92, 255), (64, 196, 255), "key"),
     ("tiktok", "TIKTOK LIVE", "Notifikasi LIVE & video baru", (0, 242, 234), (255, 0, 80), "play"),
 ]
 
@@ -99,6 +100,11 @@ def icon(d, kind, cx, cy, size, c1, c2):
     elif kind == "play":
         d.polygon([P(-14, -26), P(-14, 26), P(30, 0)], fill=col)
         d.polygon([P(-19, -26), P(-19, 26), P(25, 0)], fill=(0, 242, 234, 90))
+    elif kind == "key":
+        d.ellipse((*P(-34, -22), *P(2, 14)), fill=col)
+        d.ellipse((*P(-22, -10), *P(-10, 2)), fill=(30, 30, 50, 255))
+        d.rounded_rectangle((*P(-4, -6), *P(36, 4)), s(4 * u), fill=col)
+        d.rounded_rectangle((*P(22, 2), *P(30, 16)), s(3 * u), fill=acc)
     elif kind == "spark":
         pts = []
         for k in range(8):
