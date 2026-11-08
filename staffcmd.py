@@ -104,7 +104,7 @@ def snapshot(guild: discord.Guild) -> str:
     for cat in guild.categories:
         lines.append(f"[Kategori] {cat.name}")
         for ch in cat.channels:
-            lines.append(f"   - ({ch.type.name}) {ch.name}")
+            lines.append(f"   - {'[voice] ' if ch.type.name == 'voice' else ''}{ch.name}")
     for ch in guild.channels:
         if ch.category is None and not isinstance(ch, discord.CategoryChannel):
             lines.append(f"[Tanpa kategori] ({ch.type.name}) {ch.name}")
@@ -454,6 +454,42 @@ def is_staff(member: discord.Member) -> bool:
             or config.ROLE_FOUNDER in ids or config.ROLE_MODERATOR in ids)
 
 
+def fast_plan(text: str, tagged: dict):
+    """Jalur cepat tanpa AI untuk perintah moderasi umum. None jika tidak cocok."""
+    if not tagged:
+        return None
+    t = re.sub(r"<@!?\d+>", " ", text)
+    t = re.sub(r"\s+", " ", t).strip()
+    low = t.lower()
+    ids = [str(i) for i in tagged]
+
+    def reason():
+        m = re.search(r"(?:karena|alasan|soalnya|gara-gara)\s*:?\s*(.+)$", t, re.I)
+        if m:
+            return m.group(1).strip()[:300]
+        rest = re.sub(r"^(?:tolong\s+)?(?:kasih warn|beri warn|warning|warn|peringatkan|kick|ban|timeout|mute)\s*", "", t, flags=re.I)
+        rest = re.sub(r"^\d+\s*(?:menit|mnt|jam|hari)?\s*", "", rest, flags=re.I).strip()
+        return (rest or "Pelanggaran aturan server")[:300]
+
+    m = re.match(r"^(?:tolong\s+)?(?:pindah(?:in|kan)?|move)\b.*?\b(?:ke|to)\s+(?:voice\s*(?:channel)?\s*|vc\s*|channel\s*)?(.+)$", t, re.I)
+    if m:
+        return [{"action": "move_voice", "user_id": i, "channel": m.group(1).strip()} for i in ids]
+    if re.match(r"^(?:tolong\s+)?(?:keluarin|keluarkan|disconnect|dc|tendang)\b.*\b(?:voice|vc)\b", low):
+        return [{"action": "disconnect_voice", "user_id": i} for i in ids]
+    if re.match(r"^(?:tolong\s+)?(?:kick|keluarkan dari server)\b", low):
+        return [{"action": "kick_user", "user_id": i, "reason": reason()} for i in ids]
+    if re.match(r"^(?:tolong\s+)?ban\b", low):
+        return [{"action": "ban_user", "user_id": i, "reason": reason()} for i in ids]
+    if re.match(r"^(?:tolong\s+)?(?:warn|warning|kasih warn|beri warn|peringatkan)\b", low):
+        return [{"action": "warn_user", "user_id": i, "reason": reason()} for i in ids]
+    m = re.match(r"^(?:tolong\s+)?(?:timeout|mute)\b.*?(\d+)\s*(menit|mnt|jam|hari)?", low)
+    if m:
+        n = int(m.group(1)); unit = (m.group(2) or "menit")
+        mins = n * (60 if unit == "jam" else 1440 if unit == "hari" else 1)
+        return [{"action": "timeout_user", "user_id": i, "minutes": mins, "reason": reason()} for i in ids]
+    return None
+
+
 async def handle(bot_user, message: discord.Message):
     text = re.sub(rf"<@!?{bot_user.id}>", "", message.content).strip()
     if not text:
@@ -463,12 +499,16 @@ async def handle(bot_user, message: discord.Message):
     tagged = {m.id: m for m in message.mentions
               if isinstance(m, discord.Member) and m.id != bot_user.id}
     tagged_txt = "\n".join(f"- {m.display_name} (@{m.name}) id={m.id}" for m in tagged.values()) or "(tidak ada)"
-    async with message.channel.typing():
-        raw = await ai_service._raw_completion(
-            SYSTEM_PROMPT,
-            f"{snapshot(guild)}\n\nPENGGUNA YANG DI-TAG:\n{tagged_txt}\n\nPERINTAH STAFF:\n{text[:1500]}",
-            max_tokens=1800, temperature=0.1, timeout=60)
-    plan = parse_plan(raw)
+    quick = fast_plan(text, tagged)
+    if quick:
+        plan = {"reply": "", "actions": quick[:MAX_ACTIONS]}
+    else:
+        async with message.channel.typing():
+            raw = await ai_service._raw_completion(
+                SYSTEM_PROMPT,
+                f"{snapshot(guild)}\n\nPENGGUNA YANG DI-TAG:\n{tagged_txt}\n\nPERINTAH STAFF:\n{text[:1500]}",
+                max_tokens=1500, temperature=0.1, timeout=35)
+        plan = parse_plan(raw)
     if plan is None:
         await message.reply("😵 AI lagi tidak bisa menjawab / formatnya salah. Coba ulangi sebentar lagi.")
         return
