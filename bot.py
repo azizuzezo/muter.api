@@ -26,6 +26,7 @@ import re
 import config
 import ai_service
 import colorroles
+import staffcmd
 from colorroles import cleanup
 from tiktok_monitor import TikTokMonitor
 
@@ -374,6 +375,12 @@ async def on_message(message: discord.Message):
                 await logs_ch.send(embed=log_embed)
 
             return
+
+    # Perintah staff bahasa natural (hanya di #bot-command, hanya Founder/Moderator)
+    if message.channel.id == config.CHANNEL_STAFF_CMD:
+        if bot.user in message.mentions and not message.mention_everyone and staffcmd.is_staff(message.author):
+            await staffcmd.handle(bot.user, message)
+        return
 
     # Trigger AI Mention: Jika member mention bot (@BalikLayar Bot)
     if bot.user in message.mentions and not message.mention_everyone:

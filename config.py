@@ -18,6 +18,7 @@ CHANNEL_ANNOUNCEMENT = 1568188365726023713 # ┃・📢・pengumuman
 CHANNEL_ROLES = 1568203759375351908       # ╰・🛡️・verifikasi-kreator
 CHANNEL_CHAT = 1568182411874017292        # ╭・💬・ngobrol-santai
 CHANNEL_LOGS = 1568203782276382770        # ╰・📋・bot-logs
+CHANNEL_STAFF_CMD = int(os.getenv("DISCORD_CHANNEL_STAFF_CMD", 1568910271173492876))  # ┃・🤖・bot-command (khusus staff)
 
 # ==========================================
 # TIKTOK MONITOR (LIVE + VIDEO BARU)
