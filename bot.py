@@ -25,6 +25,7 @@ import re
 
 import config
 import ai_service
+import colorroles
 from tiktok_monitor import TikTokMonitor
 
 intents = discord.Intents.default()
@@ -37,6 +38,7 @@ class BalikLayarBot(commands.Bot):
 
     async def setup_hook(self):
         self.add_view(HumanVerificationView())
+        self.add_view(colorroles.ColorRoleView())
         guild = discord.Object(id=config.GUILD_ID)
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
@@ -524,6 +526,13 @@ async def setup_verifikasi(interaction: discord.Interaction):
         await interaction.response.send_message(f"✅ Panel verifikasi otomatis dipasang di <#{config.CHANNEL_ROLES}>!", ephemeral=True)
     else:
         await interaction.response.send_message(embed=embed, view=view)
+
+
+@bot.tree.command(name="setup-warna", description="Pasang panel ganti warna role ke channel ini")
+@app_commands.default_permissions(administrator=True)
+async def setup_warna(interaction: discord.Interaction):
+    await interaction.channel.send(embed=colorroles.build_embed(), view=colorroles.ColorRoleView())
+    await interaction.response.send_message("✅ Panel warna dipasang.", ephemeral=True)
 
 
 @bot.tree.command(name="clear", description="Bersihkan sejumlah pesan dari channel (Khusus Moderator/Admin)")
