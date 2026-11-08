@@ -42,12 +42,15 @@ def _color_roles(member: discord.Member):
 
 
 async def _place(guild: discord.Guild, role: discord.Role):
+    """Taruh role tepat di bawah Moderator (naik di atas Kreator/Power User)."""
     mod = guild.get_role(config.ROLE_MODERATOR)
-    if mod:
-        try:
-            await role.edit(position=mod.position, reason="Posisi color role")
-        except discord.HTTPException:
-            pass
+    if not mod:
+        return
+    try:
+        await guild.edit_role_positions(
+            positions={role: mod.position}, reason="Posisi color role")
+    except discord.HTTPException as e:
+        print(f"⚠️ Gagal memindah role warna {role.name}: {e}")
 
 
 async def _strip(member: discord.Member, keep: discord.Role | None = None):
