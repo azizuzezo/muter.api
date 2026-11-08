@@ -335,8 +335,8 @@ async def run_action(guild: discord.Guild, member: discord.Member, a: dict, tagg
             if not isinstance(ch, discord.TextChannel):
                 return "❌ purge: hanya untuk text channel"
             n = min(100, max(1, int(a.get("count", 10) or 10)))
-            deleted = await ch.purge(limit=n, reason=reason)
-            return f"✅ {len(deleted)} pesan dihapus di {ch.mention}"
+            deleted = await ch.purge(limit=n, check=purge_check, reason=reason)
+            return f"✅ {len(deleted)} pesan dihapus di {ch.mention} (pesan pin & panel bot dilewati)"
 
     if act in ("move_voice", "disconnect_voice"):
         try:
@@ -446,6 +446,15 @@ async def audit(guild, member, actions, results):
     e.add_field(name="Aksi", value="\n".join(describe(a) for a in actions)[:1000] or "-", inline=False)
     e.add_field(name="Hasil", value="\n".join(results)[:1000] or "-", inline=False)
     await ch.send(embed=e)
+
+
+def purge_check(m: discord.Message) -> bool:
+    """Pesan yang BOLEH dihapus purge: bukan pin dan bukan panel/banner buatan bot."""
+    if m.pinned:
+        return False
+    if m.author.bot and (m.embeds or m.components or m.attachments):
+        return False
+    return True
 
 
 def is_staff(member: discord.Member) -> bool:

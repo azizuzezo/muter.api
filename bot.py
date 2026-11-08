@@ -559,8 +559,8 @@ async def clear_messages(interaction: discord.Interaction, jumlah: int):
         return
 
     await interaction.response.defer(ephemeral=True)
-    deleted = await interaction.channel.purge(limit=jumlah)
-    await interaction.followup.send(f"🧹 Berhasil menghapus **{len(deleted)}** pesan.", ephemeral=True)
+    deleted = await interaction.channel.purge(limit=jumlah, check=staffcmd.purge_check)
+    await interaction.followup.send(f"🧹 Berhasil menghapus **{len(deleted)}** pesan (pesan pin & panel bot dilewati).", ephemeral=True)
 
 
 @bot.tree.command(name="say", description="Kirim pesan atau pengumuman melalui bot")
