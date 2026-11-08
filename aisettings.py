@@ -125,6 +125,8 @@ class SettingsModal(discord.ui.Modal, title="Pengaturan AI"):
         cleanup(interaction, 25)
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
+        import traceback
+        traceback.print_exception(type(error), error, error.__traceback__)
         msg = "⚠️ Gagal menyimpan pengaturan."
         if interaction.response.is_done():
             await interaction.followup.send(msg, ephemeral=True)

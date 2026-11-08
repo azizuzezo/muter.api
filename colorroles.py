@@ -127,6 +127,8 @@ class CustomColorModal(discord.ui.Modal, title="Warna Custom (HEX)"):
         cleanup(interaction)
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
+        import traceback
+        traceback.print_exception(type(error), error, error.__traceback__)
         msg = "⚠️ Gagal mengatur warna. Pastikan role bot berada di atas role warna."
         if interaction.response.is_done():
             await interaction.followup.send(msg, ephemeral=True)
