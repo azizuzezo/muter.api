@@ -104,7 +104,7 @@ class SettingsModal(discord.ui.Modal, title="Pengaturan AI"):
             await interaction.response.send_message("⛔ Khusus Founder.", ephemeral=True)
             cleanup(interaction)
             return
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             with open(FILE, encoding="utf-8") as f:
                 data = json.load(f)
@@ -157,7 +157,7 @@ class AISettingsView(discord.ui.View):
 
     @discord.ui.button(label="Tes Koneksi", style=discord.ButtonStyle.success, emoji="🧪", custom_id="baliklayar:ai:test")
     async def test(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         await interaction.followup.send(await test_connection(), ephemeral=True)
         cleanup(interaction, 20)
 

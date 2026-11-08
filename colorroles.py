@@ -35,7 +35,11 @@ _HEX_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
 
 
 def cleanup(interaction: discord.Interaction, delay: float = 6):
-    """Hapus balasan ephemeral otomatis supaya tidak menumpuk di layar member."""
+    """Hapus balasan ephemeral otomatis supaya tidak menumpuk di layar member.
+
+    PENTING: pada interaksi tombol/form, defer harus thinking=True. Tanpa itu
+    delete_original_response() menghapus pesan panel aslinya, bukan balasan privat.
+    """
     async def _later():
         await asyncio.sleep(delay)
         try:
@@ -104,7 +108,7 @@ class CustomColorModal(discord.ui.Modal, title="Warna Custom (HEX)"):
                 "❌ Format salah. Pakai 6 digit HEX, contoh `FF5733`.", ephemeral=True)
             cleanup(interaction)
             return
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         member, guild = interaction.user, interaction.guild
         value = int(m.group(1), 16) or 0x010101  # 000000 = "tanpa warna" di Discord
         mine = [r for r in _color_roles(member) if r.name not in PRESET_NAMES]
@@ -147,7 +151,7 @@ class ColorSelect(discord.ui.Select):
                 "🔒 Verifikasi dulu untuk jadi **Kreator**, baru bisa ganti warna.", ephemeral=True)
             cleanup(interaction)
             return
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             await _apply_preset(interaction, self.values[0])
         except discord.HTTPException:
@@ -174,7 +178,7 @@ class ColorRoleView(discord.ui.View):
     @discord.ui.button(label="Reset Warna", style=discord.ButtonStyle.secondary,
                        emoji="♻️", custom_id="baliklayar:color:reset")
     async def reset(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         await _strip(interaction.user)
         await interaction.followup.send("♻️ Warna dikembalikan ke warna role bawaan.", ephemeral=True)
         cleanup(interaction)
