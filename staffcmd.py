@@ -52,6 +52,8 @@ Aksi yang tersedia (gunakan nama persis dari DAFTAR SERVER untuk category/channe
 - {"action":"sync_permissions","channel":"nama"}   (samakan izin dengan kategorinya)
 - {"action":"purge","channel":"nama","count":10}   (hapus N pesan terakhir, maks 100)
 - {"action":"set_access","channel":"nama channel/voice/kategori","role":"nama role atau everyone","access":"allow|read_only|deny|reset"}   (atur siapa yang bisa lihat/masuk/chat: allow=lihat+masuk+chat/bicara, read_only=lihat saja tidak bisa chat/bicara, deny=disembunyikan, reset=hapus aturan khusus role itu)
+- {"action":"move_voice","user_id":"123","channel":"nama voice channel"}   (pindahkan member yang sedang di voice ke voice lain; boleh beberapa aksi untuk beberapa user)
+- {"action":"disconnect_voice","user_id":"123"}   (keluarkan member dari voice)
 - {"action":"warn_user","user_id":"123","reason":"..."}
 - {"action":"timeout_user","user_id":"123","minutes":10,"reason":"..."}
 - {"action":"kick_user","user_id":"123","reason":"..."}
@@ -60,6 +62,7 @@ Aksi yang tersedia (gunakan nama persis dari DAFTAR SERVER untuk category/channe
 - {"action":"remove_role","user_id":"123","role":"nama"}
 
 Aturan:
+- reply hanya untuk menjelaskan/bertanya. JANGAN pernah menulis di reply bahwa kamu "sudah"/"akan" melakukan sesuatu; hasil nyata dilaporkan sistem. Kalau permintaan tidak cocok dengan aksi mana pun, actions harus kosong dan reply menjelaskan kenapa.
 - Maksimal 15 aksi (boleh banyak untuk merapikan server). Kalau permintaan tidak jelas atau tidak bisa dilakukan, kosongkan actions dan jelaskan/tanya di reply.
 - Untuk create_channel text: name berupa slug huruf kecil dengan tanda hubung (contoh "request-fitur"); emoji cocok dengan topiknya. Jangan menaruh dekorasi ╭┃╰ sendiri, sistem yang menambahkan.
 - user_id HANYA boleh berasal dari bagian PENGGUNA YANG DI-TAG. Kalau staff minta aksi ke user tapi tidak ada yang di-tag, minta mereka tag user itu.
@@ -335,6 +338,28 @@ async def run_action(guild: discord.Guild, member: discord.Member, a: dict, tagg
             deleted = await ch.purge(limit=n, reason=reason)
             return f"✅ {len(deleted)} pesan dihapus di {ch.mention}"
 
+    if act in ("move_voice", "disconnect_voice"):
+        try:
+            uid = int(str(a.get("user_id", "")).strip())
+        except ValueError:
+            return f"❌ {act}: user_id tidak valid"
+        t = tagged.get(uid)
+        if t is None:
+            return f"⛔ {act}: user itu tidak di-tag di pesan staff"
+        if t.bot:
+            return f"⛔ {act}: tidak untuk bot"
+        if not t.voice or not t.voice.channel:
+            return f"❌ {act}: {t.mention} sedang tidak di voice channel"
+        if act == "disconnect_voice":
+            await t.move_to(None, reason=reason)
+            return f"✅ {t.mention} dikeluarkan dari voice"
+        vc, err = _find([c for c in guild.channels if isinstance(c, (discord.VoiceChannel, discord.StageChannel))],
+                        str(a.get("channel", "")))
+        if err:
+            return f"❌ move_voice: voice channel {err}"
+        await t.move_to(vc, reason=reason)
+        return f"✅ {t.mention} dipindah ke **{vc.name}**"
+
     if act in ("warn_user", "timeout_user", "kick_user", "ban_user", "add_role", "remove_role"):
         t, err = _target(guild, member, a, tagged)
         if err:
@@ -377,7 +402,7 @@ async def run_action(guild: discord.Guild, member: discord.Member, a: dict, tagg
 
 
 def describe(a: dict) -> str:
-    keys = ("action", "name", "channel", "role", "category", "type", "topic", "color", "user_id", "minutes", "count", "reason", "access")
+    keys = ("action", "name", "channel", "role", "category", "type", "topic", "color", "user_id", "minutes", "count", "reason", "access", "user_id")
     return " ".join(f"{k}=`{a[k]}`" for k in keys if a.get(k) not in (None, ""))
 
 
@@ -461,7 +486,7 @@ async def handle(bot_user, message: discord.Message):
             results.append(f"⚠️ {a.get('action')}: bot tidak punya izin (cek posisi role bot)")
         except discord.HTTPException as e:
             results.append(f"❌ {a.get('action')}: {e}")
-    head = [plan["reply"]] if plan["reply"] else []
+    head = []  # klaim AI tidak ditampilkan saat ada aksi; hanya hasil nyata
     if safe:
         await audit(guild, member, safe, results)
     if risky:
